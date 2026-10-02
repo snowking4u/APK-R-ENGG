@@ -2,13 +2,21 @@
 
 A QPlainTextEdit companion featuring:
   - monospaced font
-  - line number gutter
+  - line-number gutter
   - optional read-only mode
   - pluggable syntax highlighter (see ``app/ui/syntax.py``)
+  - lazy, read-only file loading and line navigation (Phase 03)
+
+Phase 03 turns the Java editor into a real viewer for decompiled sources:
+file contents are read on demand (never all at once), oversized files are
+refused politely, and the widget always stays read-only so decompiled code
+can never be modified by accident. Nothing read here is ever executed.
 """
 
+import os
+
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QTextFormat
+from PySide6.QtGui import QColor, QFont, QPainter, QTextBlock, QTextCursor, QTextFormat
 from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from app.ui.syntax import HIGHLIGHTERS
@@ -17,6 +25,9 @@ _LINE_BG = QColor("#1e1e1e")
 _LINE_FG = QColor("#6b6b6b")
 _LINE_BORDER = QColor("#2d2e31")
 _LINE_SELECTION_BG = QColor("#26282c")
+
+#: Files bigger than this are not loaded (keeps the UI responsive).
+MAX_DISPLAY_BYTES = 8 * 1024 * 1024  # 8 MiB
 
 
 class _LineNumberArea(QWidget):
@@ -40,9 +51,14 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self._language = language
         self._line_area = _LineNumberArea(self)
+        self._file_path = None
 
         self.setReadOnly(read_only)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setCenterOnScroll(True)
+        if read_only:
+            # Read-only viewers keep no undo history (Phase 03 Java view).
+            self.setUndoRedoEnabled(False)
 
         font = QFont("Consolas", 10)
         font.setStyleHint(QFont.Monospace)
@@ -71,12 +87,80 @@ class CodeEditor(QPlainTextEdit):
     def language(self):
         return self._language
 
+    @property
+    def file_path(self):
+        """Absolute path currently displayed, or ``None``."""
+        return self._file_path
+
     def set_content(self, text):
         """Replace editor content without touching undo history weirdness."""
         self.setPlainText(text or "")
 
     def highlighter(self):
         return self._highlighter
+
+    # ------------------------------------------------------------------ #
+    # File loading (Phase 03, lazy + read-only)
+    # ------------------------------------------------------------------ #
+    def load_file(self, path, notice_prefix=""):
+        """Load a text file into the editor (lazily, read-only).
+
+        Returns ``True`` on success. Missing, unreadable, empty or oversized
+        files are handled gracefully and never raise. Syntax highlighting is
+        temporarily disabled for very large files to keep scrolling smooth.
+        """
+        self._file_path = None
+        if not path or not os.path.isfile(path):
+            self.set_content("%s%s" % (notice_prefix,
+                                       "File not available: %s"
+                                       % os.path.basename(path or "?")))
+            return False
+
+        try:
+            size = os.path.getsize(path)
+        except OSError as exc:
+            self.set_content("%s%s" % (notice_prefix,
+                                       "Cannot read file: %s" % exc))
+            return False
+
+        if size > MAX_DISPLAY_BYTES:
+            self.set_content("%s%s is too large to display (%d KB)."
+                             % (notice_prefix, os.path.basename(path),
+                                size // 1024))
+            return False
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError as exc:
+            self.set_content("%s%s" % (notice_prefix,
+                                       "Cannot read file: %s" % exc))
+            return False
+
+        self.set_content(text)
+        self._file_path = os.path.abspath(path)
+        self.moveCursor(QTextCursor.Start)
+        return True
+
+    def goto_line(self, line, center=True):
+        """Move the cursor to a 1-based ``line``. Returns True on success."""
+        if not line or line < 1:
+            return False
+        block = self.document().findBlockByNumber(int(line) - 1)
+        if not block.isValid():
+            return False
+        cursor = QTextCursor(block)
+        cursor.select(QTextBlock.LineUnderCursor)
+        self.setTextCursor(cursor)
+        if center:
+            self.centerCursor()
+        else:
+            self.ensureCursorVisible()
+        return True
+
+    def current_line_number(self):
+        """1-based line number under the cursor."""
+        return self.textCursor().blockNumber() + 1
 
     # ------------------------------------------------------------------ #
     # Highlighter

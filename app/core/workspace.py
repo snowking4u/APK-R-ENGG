@@ -1,4 +1,4 @@
-"""Workspace planning and creation (Phase 02).
+"""Workspace planning and creation (Phase 02, extended in Phase 03).
 
 A fresh APK gets its own dedicated workspace under ``projects/``::
 
@@ -8,6 +8,8 @@ A fresh APK gets its own dedicated workspace under ``projects/``::
             decoded/                  - Apktool output
             metadata/                 - parsed manifest / decode info
             logs/                     - per-project log files
+            decompiled/               - Phase 03 JADX output (sources/,
+                ...                     resources/)
 
 The source APK is NEVER modified; a byte-copy lands into ``original/``.
 
@@ -27,11 +29,12 @@ class WorkspacePlan:
     """The outcome of planning a workspace for an APK."""
 
     __slots__ = ("apk_path", "name", "root", "original_dir", "decoded_dir",
-                 "metadata_dir", "logs_dir", "reused", "cancelled", "error")
+                 "metadata_dir", "logs_dir", "decompiled_dir", "reused",
+                 "cancelled", "error")
 
     def __init__(self, apk_path="", name="", root="", original_dir="",
                  decoded_dir="", metadata_dir="", logs_dir="",
-                 reused=False, cancelled=False, error=""):
+                 decompiled_dir="", reused=False, cancelled=False, error=""):
         self.apk_path = apk_path
         self.name = name
         self.root = root
@@ -39,6 +42,7 @@ class WorkspacePlan:
         self.decoded_dir = decoded_dir
         self.metadata_dir = metadata_dir
         self.logs_dir = logs_dir
+        self.decompiled_dir = decompiled_dir
         self.reused = reused
         self.cancelled = cancelled
         self.error = error
@@ -56,6 +60,7 @@ class WorkspacePlan:
             "decoded_dir": self.decoded_dir,
             "metadata_dir": self.metadata_dir,
             "logs_dir": self.logs_dir,
+            "decompiled_dir": self.decompiled_dir,
             "reused": self.reused,
             "cancelled": self.cancelled,
             "error": self.error,
@@ -76,6 +81,13 @@ def default_name(apk_path):
     return _safe_name(apk_path)
 
 
+def default_projects_root():
+    """Default ``projects/`` directory (repository root + ``projects``)."""
+    base = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    return os.path.join(base, "projects")
+
+
 def plan_workspace(projects_root, basename, on_conflict):
     """Plan storage for decoding ``basename`` under ``projects_root``.
 
@@ -94,6 +106,7 @@ def plan_workspace(projects_root, basename, on_conflict):
             decoded_dir=os.path.join(root, "decoded"),
             metadata_dir=os.path.join(root, "metadata"),
             logs_dir=os.path.join(root, "logs"),
+            decompiled_dir=os.path.join(root, "decompiled"),
             reused=False,
         )
 
@@ -106,6 +119,7 @@ def plan_workspace(projects_root, basename, on_conflict):
             decoded_dir=os.path.join(root, "decoded"),
             metadata_dir=os.path.join(root, "metadata"),
             logs_dir=os.path.join(root, "logs"),
+            decompiled_dir=os.path.join(root, "decompiled"),
             reused=True,
         )
     if decision == "new":
@@ -121,6 +135,7 @@ def plan_workspace(projects_root, basename, on_conflict):
                     decoded_dir=os.path.join(candidate_root, "decoded"),
                     metadata_dir=os.path.join(candidate_root, "metadata"),
                     logs_dir=os.path.join(candidate_root, "logs"),
+                    decompiled_dir=os.path.join(candidate_root, "decompiled"),
                     reused=False,
                 )
 
@@ -135,7 +150,7 @@ def create_workspace_dirs(plan):
     """
     try:
         for directory in (plan.root, plan.original_dir, plan.decoded_dir,
-                          plan.metadata_dir, plan.logs_dir):
+                          plan.metadata_dir, plan.logs_dir, plan.decompiled_dir):
             os.makedirs(directory, exist_ok=True)
         logger.info("Workspace created: %s" % plan.root)
         return True

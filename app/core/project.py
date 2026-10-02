@@ -1,12 +1,13 @@
 """Project model.
 
-Represents an opened APK / project in the IDE. In Phase 01 this is an
-in-memory holder only: values are initialized safely to defaults and
-will be populated by future phases (APK loading, decoding, analysis).
+Represents an opened APK / project in the IDE. Phase 01 introduced the
+in-memory holder, Phase 02 filled in the decoded-workspace values and
+Phase 03 adds the JADX / Java decompilation values. Every attribute added
+in Phase 03 has a safe default, so the Phase 01 contract is unchanged.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, List, Optional
 
 
 @dataclass
@@ -26,6 +27,22 @@ class Project:
     resource_count: int = 0
     build_status: str = "Idle"
 
+    # ----- Phase 02 (decoded workspace) ------------------------------- #
+    workspace_root: Optional[str] = None
+    decoded_dir: Optional[str] = None
+    smali_dirs: List[str] = field(default_factory=list)
+    manifest_path: Optional[str] = None
+
+    # ----- Phase 03 (JADX / Java decompilation) ------------------------ #
+    decompiled_dir: Optional[str] = None
+    java_source_root: Optional[str] = None
+    dex_files: List[str] = field(default_factory=list)
+    java_sources: List[str] = field(default_factory=list)
+    java_index: Optional[Any] = None
+    decompile_status: str = "Idle"
+    jadx_status: str = "Not configured"
+    dex_count: int = 0
+
     def is_loaded(self) -> bool:
         """True once a project (or at least an APK) has been opened."""
         return bool(self.apk_path or self.project_path)
@@ -38,6 +55,57 @@ class Project:
             return self.name
         return "Untitled Project"
 
+    # ------------------------------------------------------------------ #
+    # Phase 02 helpers.
+    # ------------------------------------------------------------------ #
+    def apply_decode_report(self, report) -> bool:
+        """Populate the project from a Phase 02 :class:`DecodeReport`."""
+        workspace = getattr(report, "workspace", None)
+        self.name = workspace.name if workspace is not None else ""
+        self.project_path = workspace.root if workspace is not None else ""
+        self.workspace_root = self.project_path
+        self.apk_path = report.apk_path or self.apk_path
+        self.decoded_dir = (getattr(workspace, "decoded_dir", "")
+                            if workspace is not None else "") or ""
+        self.smali_dirs = list(getattr(report, "smali_dirs", []) or [])
+        self.manifest_path = getattr(report, "manifest_path", "") or ""
+        self.dex_files = list(getattr(report, "dex_names", []) or [])
+        self.dex_count = len(self.dex_files)
+        manifest = getattr(report, "manifest", None)
+        if manifest is not None:
+            self.package_name = manifest.package or self.package_name
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Phase 03 helpers.
+    # ------------------------------------------------------------------ #
+    def apply_decompile_report(self, report) -> bool:
+        """Populate the project from a Phase 03 :class:`DecompileReport`."""
+        if report is None:
+            return False
+        self.decompile_status = getattr(report, "status", "Idle") or "Idle"
+        self.jadx_status = getattr(report, "jadx_status", "Not configured") \
+            or "Not configured"
+        self.decompiled_dir = getattr(report, "decompiled_dir", "") or None
+        self.java_source_root = getattr(report, "java_source_root", "") or None
+        self.java_sources = list(getattr(report, "java_sources", []) or [])
+        self.java_index = getattr(report, "index", None)
+        names = list(getattr(report, "dex_names", []) or [])
+        if names:
+            self.dex_files = names
+            self.dex_count = len(names)
+        index = self.java_index
+        if index is not None:
+            self.class_count = index.source_count
+            self.method_count = index.method_count
+        return True
+
+    def java_class_count(self) -> int:
+        """Number of indexed Java classes (``0`` when nothing indexed)."""
+        if self.java_index is None:
+            return 0
+        return self.java_index.source_count
+
     def reset(self):
         """Restore every field to its safe default value."""
         self.name = ""
@@ -48,6 +116,18 @@ class Project:
         self.method_count = 0
         self.resource_count = 0
         self.build_status = "Idle"
+        self.workspace_root = None
+        self.decoded_dir = None
+        self.smali_dirs = []
+        self.manifest_path = None
+        self.decompiled_dir = None
+        self.java_source_root = None
+        self.dex_files = []
+        self.java_sources = []
+        self.java_index = None
+        self.decompile_status = "Idle"
+        self.jadx_status = "Not configured"
+        self.dex_count = 0
 
     def to_state(self, state):
         """Push this project's values into the central AppState."""
@@ -60,6 +140,14 @@ class Project:
         state.method_count = self.method_count
         state.resource_count = self.resource_count
         state.build_status = self.build_status
+        state.set_decompile_summary(
+            jadx_status=self.jadx_status,
+            decompile_status=self.decompile_status,
+            dex_count=self.dex_count,
+            dex_names=self.dex_files,
+            java_source_count=len(self.java_sources),
+            java_method_count=self.method_count if self.java_index else 0,
+        )
 
 
 # Convenience default project used by the UI until a real one is loaded.
