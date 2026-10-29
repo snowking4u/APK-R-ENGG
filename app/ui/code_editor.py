@@ -15,10 +15,11 @@ can never be modified by accident. Nothing read here is ever executed.
 
 import os
 
-from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QTextBlock, QTextCursor, QTextFormat
+from PySide6.QtCore import QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QTextCursor, QTextFormat
 from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
+from app.core.smali_parser import read_smali_text
 from app.ui.syntax import HIGHLIGHTERS
 
 _LINE_BG = QColor("#1e1e1e")
@@ -47,11 +48,19 @@ class _LineNumberArea(QWidget):
 class CodeEditor(QPlainTextEdit):
     """Rich-text-free editor with a line-number gutter and highlighting."""
 
+    #: Emitted whenever the document's modified flag changes.
+    dirty_changed = Signal(bool)
+    #: Emitted with the absolute path after a successful save.
+    file_saved = Signal(str)
+
     def __init__(self, language="text", read_only=False, placeholder="", parent=None):
         super().__init__(parent)
         self._language = language
         self._line_area = _LineNumberArea(self)
         self._file_path = None
+        self._loading = False
+        self._had_bom = False
+        self._original_newline = "\n"
 
         self.setReadOnly(read_only)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -73,6 +82,7 @@ class CodeEditor(QPlainTextEdit):
         self.blockCountChanged.connect(self._update_line_area_width)
         self.updateRequest.connect(self._update_line_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.document().modificationChanged.connect(self._on_modification_changed)
 
         self._update_line_area_width(0)
         self._highlight_current_line()
@@ -92,12 +102,99 @@ class CodeEditor(QPlainTextEdit):
         """Absolute path currently displayed, or ``None``."""
         return self._file_path
 
-    def set_content(self, text):
+    def set_content(self, text, mark_clean=True):
         """Replace editor content without touching undo history weirdness."""
-        self.setPlainText(text or "")
+        self._loading = True
+        try:
+            self.setPlainText(text or "")
+            if mark_clean:
+                self.document().setModified(False)
+        finally:
+            self._loading = False
 
     def highlighter(self):
         return self._highlighter
+
+    # ------------------------------------------------------------------ #
+    # Editable file support (Phase 04, Smali)
+    # ------------------------------------------------------------------ #
+    def load_editable_file(self, path, notice_prefix=""):
+        """Load a UTF-8 text file for editing.
+
+        Returns ``(ok, error)``. Undecodable, unreadable, missing or
+        oversized files show a safe error state and leave the original
+        file untouched. A successful load starts with a clean dirty state.
+        """
+        self._file_path = None
+        self._had_bom = False
+        self._original_newline = "\n"
+
+        if not path or not os.path.isfile(path):
+            self.setReadOnly(True)
+            self.set_content("%s%s" % (
+                notice_prefix, "File not available: %s"
+                % os.path.basename(path or "?")), mark_clean=True)
+            self.dirty_changed.emit(False)
+            return False, "File not available: %s" % (path or "?")
+
+        try:
+            size = os.path.getsize(path)
+        except OSError as exc:
+            self.setReadOnly(True)
+            self.set_content("%s%s" % (notice_prefix,
+                                       "Cannot read file: %s" % exc),
+                             mark_clean=True)
+            self.dirty_changed.emit(False)
+            return False, "Cannot read file: %s" % exc
+
+        if size > MAX_DISPLAY_BYTES:
+            self.setReadOnly(True)
+            self.set_content("%s%s is too large to display (%d KB)."
+                             % (notice_prefix, os.path.basename(path),
+                                size // 1024), mark_clean=True)
+            self.dirty_changed.emit(False)
+            return False, "File is too large to display."
+
+        text, error = read_smali_text(path)
+        if error:
+            self.setReadOnly(True)
+            self.set_content("%s%s" % (notice_prefix, error), mark_clean=True)
+            self.dirty_changed.emit(False)
+            return False, error
+
+        self._had_bom = _has_utf8_bom(path)
+        self._original_newline = "\r\n" if "\r\n" in (text or "") else "\n"
+        normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        self.setReadOnly(False)
+        self.set_content(normalized, mark_clean=True)
+        self._file_path = os.path.abspath(path)
+        self.moveCursor(QTextCursor.Start)
+        self.dirty_changed.emit(False)
+        return True, ""
+
+    def serialize_text(self):
+        """Return the editor text using the file's original line endings."""
+        text = self.toPlainText()
+        if self._original_newline and self._original_newline != "\n":
+            text = text.replace("\n", self._original_newline)
+        if self._had_bom:
+            text = "\ufeff" + text
+        return text
+
+    def mark_saved(self):
+        """Clear the dirty flag after a successful write."""
+        self.document().setModified(False)
+        if self._file_path:
+            self.file_saved.emit(self._file_path)
+        self.dirty_changed.emit(False)
+
+    def is_dirty(self):
+        return bool(self.document().isModified())
+
+    def _on_modification_changed(self, modified):
+        if self._loading:
+            return
+        self.dirty_changed.emit(bool(modified))
 
     # ------------------------------------------------------------------ #
     # File loading (Phase 03, lazy + read-only)
@@ -150,7 +247,7 @@ class CodeEditor(QPlainTextEdit):
         if not block.isValid():
             return False
         cursor = QTextCursor(block)
-        cursor.select(QTextBlock.LineUnderCursor)
+        cursor.select(QTextCursor.LineUnderCursor)
         self.setTextCursor(cursor)
         if center:
             self.centerCursor()
@@ -226,3 +323,11 @@ class CodeEditor(QPlainTextEdit):
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
         self.setExtraSelections([selection])
+
+
+def _has_utf8_bom(path):
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(3) == b"\xef\xbb\xbf"
+    except OSError:
+        return False

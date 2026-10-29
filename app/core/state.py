@@ -21,6 +21,9 @@ class AppState(QObject):
     # Phase 03 (JADX / Java decompilation) additions.
     decompile_status_changed = Signal()  # JADX / decompilation status
     java_changed = Signal()             # java source tree / counts changed
+    # Phase 04 (Smali discovery / editor) additions.
+    smali_changed = Signal()            # smali index / counts / selection
+    smali_dirty_changed = Signal(bool)  # current Smali file modified state
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,6 +59,18 @@ class AppState(QObject):
         self._current_java_source = None
         self._current_java_class = None
         self._current_java_method = None
+
+        # Phase 04: Smali discovery / editor state.
+        self._smali_file_count = 0
+        self._smali_class_count = 0
+        self._smali_method_count = 0
+        self._smali_root_count = 0
+        self._modified_smali_count = 0
+        self._current_smali_file = None
+        self._current_smali_class = None
+        self._current_smali_method = None
+        self._smali_dirty = False
+        self._smali_status = "Idle"
 
     # ------------------------------------------------------------------ #
     # File / project information.
@@ -282,6 +297,128 @@ class AppState(QObject):
         self.java_changed.emit()
 
     # ------------------------------------------------------------------ #
+    # Phase 04: Smali discovery / editor.
+    # ------------------------------------------------------------------ #
+    @property
+    def smali_file_count(self):
+        return self._smali_file_count
+
+    @smali_file_count.setter
+    def smali_file_count(self, value):
+        self._smali_file_count = max(0, int(value or 0))
+        self.smali_changed.emit()
+
+    @property
+    def smali_class_count(self):
+        return self._smali_class_count
+
+    @smali_class_count.setter
+    def smali_class_count(self, value):
+        self._smali_class_count = max(0, int(value or 0))
+        self.smali_changed.emit()
+
+    @property
+    def smali_method_count(self):
+        return self._smali_method_count
+
+    @smali_method_count.setter
+    def smali_method_count(self, value):
+        self._smali_method_count = max(0, int(value or 0))
+        self.smali_changed.emit()
+
+    @property
+    def smali_root_count(self):
+        return self._smali_root_count
+
+    @smali_root_count.setter
+    def smali_root_count(self, value):
+        self._smali_root_count = max(0, int(value or 0))
+        self.smali_changed.emit()
+
+    @property
+    def modified_smali_count(self):
+        return self._modified_smali_count
+
+    @modified_smali_count.setter
+    def modified_smali_count(self, value):
+        self._modified_smali_count = max(0, int(value or 0))
+        self.smali_changed.emit()
+
+    @property
+    def current_smali_file(self):
+        return self._current_smali_file
+
+    @current_smali_file.setter
+    def current_smali_file(self, value):
+        self._current_smali_file = value or None
+        self.smali_changed.emit()
+
+    @property
+    def current_smali_class(self):
+        return self._current_smali_class
+
+    @current_smali_class.setter
+    def current_smali_class(self, value):
+        self._current_smali_class = value or None
+        self.smali_changed.emit()
+
+    @property
+    def current_smali_method(self):
+        return self._current_smali_method
+
+    @current_smali_method.setter
+    def current_smali_method(self, value):
+        self._current_smali_method = value or None
+        self.smali_changed.emit()
+
+    @property
+    def smali_dirty(self):
+        return self._smali_dirty
+
+    @smali_dirty.setter
+    def smali_dirty(self, value):
+        self._smali_dirty = bool(value)
+        self.smali_dirty_changed.emit(self._smali_dirty)
+        self.smali_changed.emit()
+
+    @property
+    def smali_status(self):
+        return self._smali_status
+
+    @smali_status.setter
+    def smali_status(self, value):
+        self._smali_status = value or "Idle"
+        self.smali_changed.emit()
+
+    def set_smali_selection(self, source=None, class_name=None, method=None):
+        """Batch-update the current Smali selection with one signal."""
+        self._current_smali_file = source or None
+        self._current_smali_class = class_name or None
+        self._current_smali_method = method or None
+        self.smali_changed.emit()
+
+    def set_smali_summary(self, file_count=None, class_count=None,
+                          method_count=None, root_count=None,
+                          modified_count=None, status=None, dirty=None):
+        """Batch-update Smali counts/status with a single signal emission."""
+        if file_count is not None:
+            self._smali_file_count = max(0, int(file_count or 0))
+        if class_count is not None:
+            self._smali_class_count = max(0, int(class_count or 0))
+        if method_count is not None:
+            self._smali_method_count = max(0, int(method_count or 0))
+        if root_count is not None:
+            self._smali_root_count = max(0, int(root_count or 0))
+        if modified_count is not None:
+            self._modified_smali_count = max(0, int(modified_count or 0))
+        if status is not None:
+            self._smali_status = status or "Idle"
+        if dirty is not None:
+            self._smali_dirty = bool(dirty)
+            self.smali_dirty_changed.emit(self._smali_dirty)
+        self.smali_changed.emit()
+
+    # ------------------------------------------------------------------ #
     # Helpers.
     # ------------------------------------------------------------------ #
     def set_project(self, apk_path=None, project_path=None, package_name=None):
@@ -313,6 +450,16 @@ class AppState(QObject):
         self._current_java_source = None
         self._current_java_class = None
         self._current_java_method = None
+        self._smali_file_count = 0
+        self._smali_class_count = 0
+        self._smali_method_count = 0
+        self._smali_root_count = 0
+        self._modified_smali_count = 0
+        self._current_smali_file = None
+        self._current_smali_class = None
+        self._current_smali_method = None
+        self._smali_dirty = False
+        self._smali_status = "Idle"
         self.project_changed.emit()
         self.stats_changed.emit()
         self.selection_changed.emit()
@@ -320,6 +467,8 @@ class AppState(QObject):
         self.build_status_changed.emit()
         self.decompile_status_changed.emit()
         self.java_changed.emit()
+        self.smali_changed.emit()
+        self.smali_dirty_changed.emit(False)
 
 
 # Shared application-wide state instance.

@@ -32,6 +32,11 @@ _ROWS = (
     ("Java Methods", "java_methods"),
     ("Current Class", "current_class"),
     ("Current Method", "current_method"),
+    ("Smali Directories", "smali_directories"),
+    ("Smali Files", "smali_files"),
+    ("Smali Classes", "smali_classes"),
+    ("Smali Methods", "smali_methods"),
+    ("Modified Smali", "smali_modified"),
 )
 
 
@@ -74,7 +79,7 @@ class ApkInfoPanel(QWidget):
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrame(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(form_host)
 
         layout = QVBoxLayout(self)
@@ -165,6 +170,32 @@ class ApkInfoPanel(QWidget):
 
         self.set_value("current_class", current_class)
         self.set_value("current_method", current_method)
+
+    # ------------------------------------------------------------------ #
+    # Phase 04 data
+    # ------------------------------------------------------------------ #
+    def show_smali_status(self, directories=None, files=None, classes=None,
+                          methods=None, modified=None):
+        """Display real Smali discovery/editing facts only."""
+        if directories is None:
+            self.set_value("smali_directories", NOT_AVAILABLE)
+        elif isinstance(directories, (list, tuple)):
+            names = [os.path.basename(str(item).rstrip("\\/"))
+                     for item in directories if item]
+            self.set_value("smali_directories",
+                           "%d (%s)" % (len(names), ", ".join(names))
+                           if names else NOT_AVAILABLE)
+        else:
+            self.set_value("smali_directories", directories)
+
+        self.set_value("smali_files", files if files is not None
+                       else NOT_AVAILABLE)
+        self.set_value("smali_classes", classes if classes is not None
+                       else NOT_AVAILABLE)
+        self.set_value("smali_methods", methods if methods is not None
+                       else NOT_AVAILABLE)
+        self.set_value("smali_modified", modified if modified is not None
+                       else NOT_AVAILABLE)
 
 
 def _dex_text(names=None, count=None):

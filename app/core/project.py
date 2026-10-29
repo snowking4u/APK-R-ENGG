@@ -43,6 +43,16 @@ class Project:
     jadx_status: str = "Not configured"
     dex_count: int = 0
 
+    # ----- Phase 04 (Smali discovery / editor) ------------------------- #
+    smali_roots: List[str] = field(default_factory=list)
+    smali_files: List[str] = field(default_factory=list)
+    smali_index: Optional[Any] = None
+    current_smali_file: Optional[str] = None
+    modified_smali_files: List[str] = field(default_factory=list)
+    smali_status: str = "Idle"
+    smali_class_count: int = 0
+    smali_method_count: int = 0
+
     def is_loaded(self) -> bool:
         """True once a project (or at least an APK) has been opened."""
         return bool(self.apk_path or self.project_path)
@@ -106,6 +116,35 @@ class Project:
             return 0
         return self.java_index.source_count
 
+    # ------------------------------------------------------------------ #
+    # Phase 04 helpers.
+    # ------------------------------------------------------------------ #
+    def apply_smali_index(self, index) -> bool:
+        """Populate the project from a :class:`SmaliIndex`."""
+        self.smali_index = index
+        if index is None:
+            self.smali_roots = []
+            self.smali_files = []
+            self.smali_class_count = 0
+            self.smali_method_count = 0
+            self.smali_status = "Idle"
+            return False
+        self.smali_roots = list(getattr(index, "roots", []) or [])
+        self.smali_files = [item.path for item in getattr(index, "files", [])]
+        self.smali_class_count = getattr(index, "class_count", 0)
+        self.smali_method_count = getattr(index, "method_count", 0)
+        errors = getattr(index, "parse_error_count", 0)
+        self.smali_status = ("Indexed (%d parse error(s))" % errors
+                             if errors else "Indexed")
+        if self.current_smali_file and \
+                self.current_smali_file not in self.smali_files:
+            self.current_smali_file = None
+        return True
+
+    def smali_file_count(self) -> int:
+        """Number of discovered Smali files."""
+        return len(self.smali_files)
+
     def reset(self):
         """Restore every field to its safe default value."""
         self.name = ""
@@ -128,6 +167,14 @@ class Project:
         self.decompile_status = "Idle"
         self.jadx_status = "Not configured"
         self.dex_count = 0
+        self.smali_roots = []
+        self.smali_files = []
+        self.smali_index = None
+        self.current_smali_file = None
+        self.modified_smali_files = []
+        self.smali_status = "Idle"
+        self.smali_class_count = 0
+        self.smali_method_count = 0
 
     def to_state(self, state):
         """Push this project's values into the central AppState."""
@@ -147,6 +194,20 @@ class Project:
             dex_names=self.dex_files,
             java_source_count=len(self.java_sources),
             java_method_count=self.method_count if self.java_index else 0,
+        )
+        state.set_smali_summary(
+            file_count=len(self.smali_files),
+            class_count=self.smali_class_count,
+            method_count=self.smali_method_count,
+            root_count=len(self.smali_roots),
+            modified_count=len(self.modified_smali_files),
+            status=self.smali_status,
+        )
+        state.set_smali_selection(
+            source=self.current_smali_file,
+            class_name=(self.smali_index.get(self.current_smali_file).class_name
+                        if self.smali_index and self.current_smali_file
+                        and self.smali_index.get(self.current_smali_file) else None),
         )
 
 

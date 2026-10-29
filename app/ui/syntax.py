@@ -14,6 +14,8 @@ Java rules (applied per line, later rules win on overlap):
 4. strings, characters, numbers and comments (highest priority).
 """
 
+import re
+
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtCore import QRegularExpression
 
@@ -132,7 +134,7 @@ class JavaHighlighter(MultiLineHighlighter):
         "try catch finally synchronized assert yield"
     ).split()
 
-    literals = ("true", "false", "null").split()
+    literals = ["true", "false", "null"]
 
     modifiers = (
         "public protected private static final abstract native "
@@ -180,22 +182,93 @@ class JavaHighlighter(MultiLineHighlighter):
     ]
 
 
-class SmaliHighlighter(BaseHighlighter):
-    """Placeholder Smali highlighter. Smali editing is NOT Phase 03."""
+_SMALI_DIRECTIVE_FORMAT = _format("#c586c0", bold=True)
+_SMALI_INSTRUCTION_FORMAT = _format("#569cd6")
+_SMALI_REGISTER_FORMAT = _format("#9cdcfe")
+_SMALI_LABEL_FORMAT = _format("#d7ba7d", bold=True)
+_SMALI_TYPE_FORMAT = _format("#4ec9b0")
 
-    keywords = (
-        "move return goto if invoke new-instance const sput iget "
-        "field method public private protected static final declared-signed "
-        "synchronized volatile bridge synthetic constructor"
-    ).split()
+_SMALI_INSTRUCTIONS = (
+    "const const/4 const/16 const/high16 const-wide const-string "
+    "move move/from16 move/16 move-object move-result move-result-wide "
+    "move-exception move-wide invoke-virtual invoke-super "
+    "invoke-direct invoke-static invoke-interface invoke-virtual/range "
+    "invoke-static/range return return-void return-object return-wide "
+    "if-eq if-ne if-lt if-ge if-gt if-le if-eqz if-nez if-ltz if-gez "
+    "if-gtz if-lez goto goto/16 goto/32 new-instance new-array "
+    "filled-new-array check-cast instance-of iget iget-object iget-wide "
+    "iget-boolean iget-byte iget-char iget-short iput iput-object "
+    "iput-wide iput-boolean sget sget-object sget-wide sput sput-object "
+    "sput-wide throw monitor-enter monitor-exit array-length aget aput "
+    "add sub mul div rem and or xor shl shr ushr cmp neg not int-to-long "
+    "int-to-float packed-switch sparse-switch fill-array-data nop"
+).split()
+
+_SMALI_INSTRUCTION_PATTERN = r"\b(?:" + "|".join(
+    re.escape(item) for item in sorted(_SMALI_INSTRUCTIONS, key=len,
+                                       reverse=True)) + r")\b"
+
+
+class SmaliHighlighter(BaseHighlighter):
+    """Lexical Smali highlighter (Phase 04).
+
+    Purely decorative: directives, instruction mnemonics, registers,
+    labels, descriptors, strings, numbers and comments are colored. No
+    instruction is validated or executed.
+    """
+
+    instructions = _SMALI_INSTRUCTIONS
 
     rules = [
-        _keywords_rule(*keywords),
-        (r'"([^"\\]|\\.)*"', _STRING_FORMAT),
-        (r"\b0x[0-9a-fA-F]+\b", _NUMBER_FORMAT),
-        (r"#[^\n]*", _COMMENT_FORMAT),
-        (r"^\.\w+", _BUILTIN_FORMAT),
+        # -- directives -------------------------------------------------- #
+        (r"(?m)^[ \t]*\.[A-Za-z_]+", _SMALI_DIRECTIVE_FORMAT),
+        (r"\.end[ \t]+(?:method|field|annotation|param)", _SMALI_DIRECTIVE_FORMAT),
+        # -- instruction mnemonics -------------------------------------- #
+        (_SMALI_INSTRUCTION_PATTERN, _SMALI_INSTRUCTION_FORMAT),
+        # -- labels / registers ----------------------------------------- #
+        (r"(?m)(?:^|(?<=\s)):[A-Za-z0-9_]+", _SMALI_LABEL_FORMAT),
+        (r"\b[vp]\d+\b", _SMALI_REGISTER_FORMAT),
+        # -- types / descriptors ---------------------------------------- #
+        (r"\[*L[\w/$]+;", _SMALI_TYPE_FORMAT),
+        # -- literals ---------------------------------------------------- #
+        (r"\b-?0x[0-9a-fA-F]+[lLtTsS]?\b", _NUMBER_FORMAT),
+        (r"\b-?\d+[lLtTsSfFdD]?\b", _NUMBER_FORMAT),
+        (r'"(?:\\.|[^"\\])*"', _STRING_FORMAT),
     ]
+
+    def highlightBlock(self, text):
+        for pattern, fmt in self.rules:
+            expression = pattern if isinstance(pattern, QRegularExpression) \
+                else QRegularExpression(pattern)
+            match = expression.match(text)
+            while match.hasMatch():
+                start = match.capturedStart()
+                length = match.capturedLength()
+                if length > 0:
+                    self.setFormat(start, length, fmt)
+                match = expression.match(text, start + max(length, 1))
+        comment = _smali_comment_start(text)
+        if comment >= 0:
+            self.setFormat(comment, len(text) - comment, self.comment_format)
+
+
+def _smali_comment_start(text):
+    """Index of the first ``#`` outside a string literal, or ``-1``."""
+    quoted = False
+    escaped = False
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quoted:
+            escaped = True
+            continue
+        if char == '"':
+            quoted = not quoted
+            continue
+        if char == "#" and not quoted:
+            return index
+    return -1
 
 
 HIGHLIGHTERS = {"java": JavaHighlighter, "smali": SmaliHighlighter}

@@ -71,7 +71,9 @@ class SearchView(QWidget):
     #: (query, scope, case_sensitive) submitted by the user.
     search_requested = Signal(str, str, bool)
 
-    SCOPES = ("All", "Classes", "Methods", "Packages", "Source text")
+    SCOPES = ("All", "Classes", "Methods", "Packages", "Source text",
+              "Smali", "Smali files", "Smali classes", "Smali methods",
+              "Smali source text")
 
     def __init__(self, parent=None):
         super().__init__(parent)
